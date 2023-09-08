@@ -19,7 +19,8 @@ from typing import (
 
 from fastapi.exceptions import RequestErrorModel
 from fastapi.types import IncEx, ModelNameMap, UnionType
-from pydantic import BaseModel, create_model
+from pydantic import BaseModel, PydanticDeprecatedSince20, create_model, v1
+from pydantic.version import VERSION as PYDANTIC_VERSION
 from pydantic.version import VERSION as P_VERSION
 from starlette.datastructures import UploadFile
 from typing_extensions import Annotated, Literal, get_args, get_origin
@@ -27,7 +28,6 @@ from typing_extensions import Annotated, Literal, get_args, get_origin
 # Reassign variable to make it reexported for mypy
 PYDANTIC_VERSION = P_VERSION
 PYDANTIC_V2 = PYDANTIC_VERSION.startswith("2.")
-
 
 sequence_annotation_to_type = {
     Sequence: list,
@@ -106,9 +106,12 @@ if PYDANTIC_V2:
             return self.field_info.annotation
 
         def __post_init__(self) -> None:
-            self._type_adapter: TypeAdapter[Any] = TypeAdapter(
-                Annotated[self.field_info.annotation, self.field_info]
-            )
+            try:
+                self._type_adapter: TypeAdapter[Any] = TypeAdapter(
+                    Annotated[self.field_info.annotation, self.field_info]
+                )
+            except PydanticDeprecatedSince20:
+                pass
 
         def get_default(self) -> Any:
             if self.field_info.is_required():
@@ -131,6 +134,14 @@ if PYDANTIC_V2:
                 return None, _regenerate_error_with_loc(
                     errors=exc.errors(include_url=False), loc_prefix=loc
                 )
+            except AttributeError:
+                # pydantic v1
+                try:
+                    return v1.parse_obj_as(self.type_, value), None
+                except v1.ValidationError as exc:
+                    return None, _regenerate_error_with_loc(
+                        errors=exc.errors(), loc_prefix=loc
+                    )
 
         def serialize(
             self,
@@ -144,18 +155,42 @@ if PYDANTIC_V2:
             exclude_defaults: bool = False,
             exclude_none: bool = False,
         ) -> Any:
-            # What calls this code passes a value that already called
-            # self._type_adapter.validate_python(value)
-            return self._type_adapter.dump_python(
-                value,
-                mode=mode,
-                include=include,
-                exclude=exclude,
-                by_alias=by_alias,
-                exclude_unset=exclude_unset,
-                exclude_defaults=exclude_defaults,
-                exclude_none=exclude_none,
-            )
+            try:
+                # What calls this code passes a value that already called
+                # self._type_adapter.validate_python(value)
+                return self._type_adapter.dump_python(
+                    value,
+                    mode=mode,
+                    include=include,
+                    exclude=exclude,
+                    by_alias=by_alias,
+                    exclude_unset=exclude_unset,
+                    exclude_defaults=exclude_defaults,
+                    exclude_none=exclude_none,
+                )
+            except AttributeError:
+                # pydantic v1
+                try:
+                    return value.dict(
+                        include=include,
+                        exclude=exclude,
+                        by_alias=by_alias,
+                        exclude_unset=exclude_unset,
+                        exclude_defaults=exclude_defaults,
+                        exclude_none=exclude_none,
+                    )
+                except AttributeError:
+                    return [
+                        item.dict(
+                            include=include,
+                            exclude=exclude,
+                            by_alias=by_alias,
+                            exclude_unset=exclude_unset,
+                            exclude_defaults=exclude_defaults,
+                            exclude_none=exclude_none,
+                        )
+                        for item in value
+                    ]
 
         def __hash__(self) -> int:
             # Each ModelField is unique for our purposes, to allow making a dict from
