@@ -19,7 +19,7 @@ from typing import (
 
 from fastapi.exceptions import RequestErrorModel
 from fastapi.types import IncEx, ModelNameMap, UnionType
-from pydantic import BaseModel, PydanticDeprecatedSince20, create_model, v1
+from pydantic import BaseModel, create_model
 from pydantic.version import VERSION as PYDANTIC_VERSION
 from pydantic.version import VERSION as P_VERSION
 from starlette.datastructures import UploadFile
@@ -106,6 +106,7 @@ if PYDANTIC_V2:
             return self.field_info.annotation
 
         def __post_init__(self) -> None:
+            from pydantic import PydanticDeprecatedSince20
             try:
                 self._type_adapter: TypeAdapter[Any] = TypeAdapter(
                     Annotated[self.field_info.annotation, self.field_info]
@@ -136,6 +137,7 @@ if PYDANTIC_V2:
                 )
             except AttributeError:
                 # pydantic v1
+                from pydantic import v1
                 try:
                     return v1.parse_obj_as(self.type_, value), None
                 except v1.ValidationError as exc:
